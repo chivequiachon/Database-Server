@@ -1,0 +1,16 @@
+#include "State.h"
+
+
+int main()
+{
+
+	ClientMachine c;
+	c.connect();
+	c.login();
+	c.ready();
+	c.activate();
+	c.terminate();
+
+    return 0;
+}
+

@@ -1,0 +1,135 @@
+#ifndef _PARSER_H
+#define _PARSER_H
+
+#include <string>
+#include <vector>
+#include <cstring>
+#include <locale>
+#include <algorithm>
+#include <cstdlib>
+
+class Lexer
+{
+private:
+	std::vector<std::string> message_tokens;
+
+public:
+	Lexer() {}
+	~Lexer() {}
+
+	std::vector<std::string>& getTokens()
+	{
+		return message_tokens;
+	}
+
+	bool performLexAnalysis(char *message, void *otherData)
+	{
+		// decompose data
+		std::string username = *static_cast<std::string*>(otherData);
+		username += ": ";
+
+		// store original message first because
+		// this will be altered during lexical analysis
+		char temp[100];
+		strcpy(temp, username.c_str()); // append first the client's username
+		strcat(temp, message);
+
+		//// trim first message
+		char *end;
+
+		// Trim leading space
+		while(isspace(*message)) message++;
+
+		if(*message == 0)  // All spaces?
+			return false;
+
+		// Trim trailing space
+		end = message + strlen(message) - 1;
+		while(end > message && isspace(*end)) end--;
+
+		// Write new null terminator
+		*(end+1) = 0;
+
+		message_tokens.clear();
+		
+		// perform lex analysis
+		char *tokens = strtok(message, " ");
+		while(tokens != NULL)
+		{
+			message_tokens.push_back(std::string(tokens));
+			tokens = strtok(NULL, " ");
+		}
+
+		// retrieve stored message
+		strcpy(message, temp);
+
+		return true;
+	}
+};
+
+class Parser
+{
+private:
+
+public:
+	Parser() {}
+	~Parser() {}
+
+	struct DataEncapsulator
+	{
+		char *message;
+		char *fullMessage;
+		std::vector<std::string> &to;
+	};
+
+	int parse(std::vector<std::string> &tokens, void *otherData)
+	{
+		// decompose the data pointed by void*
+		DataEncapsulator &de = *static_cast<DataEncapsulator*>(otherData);
+
+		// tokens[0] is a command, convert it to lower case
+		std::transform(tokens[0].begin(), tokens[0].end(), tokens[0].begin(), ::tolower);
+		if(tokens[0] == ".add") // add destination
+		{
+			for(unsigned int i = 1; i < tokens.size(); i++)
+			{
+				std::cout << tokens[i] << std::endl;
+				de.to.push_back(tokens[i]);
+			}
+
+			return 1;
+		}
+		else // send to destination
+		{
+			if(de.to.empty()) return -1;
+			// append all destination to full message
+			// and with space in between
+			char *space = "";
+			for(auto& str : de.to)
+			{
+				strcat(de.fullMessage, space);
+				strcat(de.fullMessage, str.c_str());
+				space = " ";
+			}
+
+			// add a space
+			strcat(de.fullMessage, "-");
+
+			// remove newline
+			de.message[strlen(de.message)-1] = '\0';
+
+			// concatenate strings, it will be in this format:
+			// <destination>-<message>
+			strcat(de.fullMessage, de.message);
+			return 0;
+		}
+
+		return -1;
+		//else if()
+		//{
+		
+		//}
+	}
+};
+
+#endif

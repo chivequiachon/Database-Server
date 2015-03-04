@@ -1,0 +1,385 @@
+/*
+ * State.h
+ *
+ *  Created on: Jun 15, 2014
+ *      Author: Chive
+ */
+
+#ifndef STATE_H_
+#define STATE_H_
+
+#include "Client.h"
+#include "Parser.h"
+#include "threadpool.h"
+
+#include <unistd.h>
+#include <sys/types.h> 
+#include <sys/socket.h>
+#include <netinet/in.h>
+
+#include <cstring>
+#include <climits>
+#include <cstdio>
+#include <cstdlib>
+#include <iostream>
+#include <string>
+
+#include <thread>
+#include <future>
+
+class TCPClientState;
+
+class ClientMachine
+{
+private:
+	TCPClient t, breakdownReporter;
+	TCPClientState *current;
+	ThreadPool *tp;
+
+	std::string username;
+	bool _isActive;
+
+public:
+
+	void receiveSession()
+	{
+	    char chunk[200] = {0};
+		while(true)
+	    {
+			if(t.receiveData(chunk, 200) > 0)
+			{
+				std::cout << "\r                                   ";
+				std::cout << "\r" << chunk << std::endl;
+				std::cout << ">> ";
+				if(strcmp(chunk, "exit") == 0) { memset(chunk, 0, 200); break; }
+				memset(chunk, 0, 200);
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	    }
+	}
+
+	void breakdownDetection()
+	{
+		// activate breakdown report transmitter
+		breakdownReporter.setAddressInfo("localhost", "14363");
+		this->breakdownReporter.connectToServer();
+		
+		// send data to confirm connectivity
+		char sendBuffer[100] = {0};
+
+		strcpy(sendBuffer, this->username.c_str());
+		
+		bool flag;
+		while(true)
+		{
+			flag = breakdownReporter.sendData(sendBuffer, 100);
+			if(!flag)
+				std::cout << "server shutdown unexpectedly" << std::endl;
+			else
+				this->_isActive = true;
+			
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		}
+	}
+
+public:
+	ClientMachine();
+	~ClientMachine() {}
+
+	void connect();
+	void login();
+	void ready();
+	void activate();
+	void terminate();
+
+	void setUsername(std::string username) { this->username = username; }
+	std::string& getUsername() { return this->username; }
+
+	void setState(TCPClientState *s) { current = s; }
+
+	ThreadPool* getThreadPool() { return this->tp; }
+	TCPClient* getTCPClient() { return &t; }
+	TCPClient* getBreakdownReporter() { return &breakdownReporter; }
+
+	bool& isActive() { return this->_isActive; }
+};
+
+class TCPClientState
+{
+public:
+	virtual ~TCPClientState() {}
+	virtual void connect(ClientMachine *t) {}
+	virtual void login(ClientMachine *t) {}
+	virtual void ready(ClientMachine *t) {}
+	virtual void active(ClientMachine *t) {}
+	virtual void end(ClientMachine *t) {}
+};
+
+class Initialize : public TCPClientState
+{
+public:
+	Initialize(ClientMachine *t);
+	virtual ~Initialize() {}
+	virtual void connect(ClientMachine *t);
+};
+
+class Connect : public TCPClientState
+{
+public:
+	Connect(ClientMachine *t);
+	virtual ~Connect() {}
+	virtual void login(ClientMachine *t);
+};
+
+class Login : public TCPClientState
+{
+public:
+	Login(ClientMachine *t);
+	virtual ~Login() {}
+	virtual void ready(ClientMachine *t);
+};
+
+class Ready : public TCPClientState
+{
+public:
+	Ready(ClientMachine *t);
+	virtual ~Ready() {}
+	virtual void active(ClientMachine *t);
+};
+
+class Active : public TCPClientState
+{
+public:
+	Active(ClientMachine *t);
+	virtual ~Active() {}
+	virtual void end(ClientMachine *t);
+};
+
+class End : public TCPClientState
+{
+public:
+	End(ClientMachine *t);
+	virtual ~End() {}
+};
+
+
+/********************************************
+ *	TCP CLIENT STATE FUNCTION DEFINITIONS
+ ********************************************/
+End::End(ClientMachine *t)
+{
+	TCPClient *temp = t->getTCPClient();
+	temp->shutdownSockets();
+	temp->closeSockets();
+}
+
+
+void Active::end(ClientMachine *t)
+{
+	t->setState(new End(t));
+	delete this;
+}
+
+Active::Active(ClientMachine *t)
+{
+	TCPClient *temp = t->getTCPClient();
+
+	// other thread for receiving messages
+	//std::async(std::launch::async, &ClientMachine::receiveSession, t);
+	t->getThreadPool()->AddTask(&ClientMachine::receiveSession, t);
+	
+	// current thread for sending messages //
+
+	// the client's username
+	std::string username = t->getUsername();
+
+	// buffers
+	char message[100] = {0};
+	char fullMessage[300] = {0};
+	std::vector<std::string> to;
+
+	// parser and lexers
+	Parser p;
+	Lexer l;
+
+	// helper flags
+	//bool flag = false;
+
+	// encapsulate all data needed in parsing
+	Parser::DataEncapsulator de = {message, fullMessage, to};
+
+	while(true)
+	{
+		// reset stream state
+		//std::cin.clear();
+
+		// ignore everything until EOF
+		//std::cin.ignore();
+
+		// get message from user
+		//std::cout << ">>";
+		//std::cin.getline(message, 100);
+
+		fflush(stdin);
+		std::cout << ">>"; fgets(message, 100, stdin);
+		
+		// perform lexing and parsing here
+		if(l.performLexAnalysis(message, static_cast<void*>(&username)))
+		{
+			switch(p.parse(l.getTokens(), static_cast<void*>(&de)))
+			{
+			case 0: // send data
+				temp->sendData(fullMessage, 300);
+				break;
+
+			case 1: break;
+			}
+		}
+
+		// clear buffers
+		memset(fullMessage, 0, 300);
+		memset(message, 0, 100);
+	
+		// sleep thread
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	}
+}
+
+void Ready::active(ClientMachine *t)
+{
+	t->setState(new Active(t));
+	delete this;
+}
+
+Ready::Ready(ClientMachine *t)
+{
+	// wait for the client to get ready
+	while(!t->isActive());
+}
+
+
+void Login::ready(ClientMachine *t)
+{
+	t->setState(new Ready(t));
+	delete this;
+}
+
+Login::Login(ClientMachine *t)
+{
+	TCPClient *temp = t->getTCPClient();
+
+	char username[50] = {0};
+	char password[50] = {0};
+	char message[100] = {0};
+
+	// LOGIN
+	while(true)
+	{
+		std::cout << "Username: "; std::cin >> username;
+		std::cout << "Password: "; std::cin >> password;
+
+		strcpy(message, username);
+		strcat(message, " ");
+		strcat(message, password);
+
+		temp->sendData(message, 100);
+
+		memset(message, 0, 100);
+		memset(password, 0, 50);
+
+		if(temp->receiveData(message, 100))
+		{
+			if(strcmp(message, "2") == 0)
+			{
+				std::cout << "Account is currently being used" << std::endl;
+			}
+
+			if(strcmp(message, "1") == 0)
+			{
+				// set username
+				t->setUsername(std::string(username));
+
+				// start thread
+				//std::async(std::launch::async, &ClientMachine::breakdownDetection, t);
+				t->getThreadPool()->AddTask(&ClientMachine::breakdownDetection, t);
+				memset(username, 0, 50);
+				break;
+			}
+
+			if(strcmp(message, "0") == 0)
+			{
+				std::cout << "login failed" << std::endl;
+			}
+		}
+
+		memset(username, 0, 50);
+	}
+}
+
+
+void Connect::login(ClientMachine *t)
+{
+	t->setState(new Login(t));
+	delete this;
+}
+
+Connect::Connect(ClientMachine *t)
+{
+	char buff[10] = {0};
+	while(true)
+	{
+		if(t->getTCPClient()->connectToServer())
+			if(t->getTCPClient()->receiveData(buff, 10))
+				if(strcmp(buff, "q") == 0) break;
+	}
+}
+
+
+void Initialize::connect(ClientMachine *t)
+{
+	t->setState(new Connect(t));
+	delete this;
+}
+
+Initialize::Initialize(ClientMachine *t)
+{
+	TCPClient *temp = t->getTCPClient();
+	//temp->initializeWinSock();
+	temp->setAddressInfo("localhost", "14362");
+}
+
+
+/********************************************
+ *	CLIENT MACHINE FUNCTION DEFINITIONS
+ ********************************************/
+ClientMachine::ClientMachine() :
+	current(new Initialize(this)), tp(new ThreadPool()), username(""), _isActive(false)
+{
+}
+
+void ClientMachine::connect()
+{
+	current->connect(this);
+}
+
+void ClientMachine::login()
+{
+	current->login(this);
+}
+
+void ClientMachine::ready()
+{
+	current->ready(this);
+}
+
+void ClientMachine::activate()
+{
+	current->active(this);
+}
+
+void ClientMachine::terminate()
+{
+	current->end(this);
+}
+
+#endif /* STATE_H_ */

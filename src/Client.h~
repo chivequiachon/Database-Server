@@ -1,0 +1,156 @@
+/*
+ * Client.h
+ *
+ *  Created on: Jun 15, 2014
+ *      Author: Chive
+ */
+
+#ifndef CLIENT_H_
+#define CLIENT_H_
+
+#include <unistd.h>
+#include <cstring>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
+
+#include <string>
+#include <iostream>
+#include <cstdlib>
+
+class TCPClient
+{
+private:
+	// Address informations
+	struct addrinfo *result;
+	struct sockaddr_in serv_addr;
+    struct hostent *server;
+	
+	// Sockets
+   	int connectSocket;
+
+public:
+	TCPClient() : result(0), connectSocket(-1) {}
+
+	~TCPClient() {}
+
+	bool setAddressInfo(const std::string host, const std::string port)
+	{
+		/*************************************
+					SOCKET(A)
+		**************************************/
+		/** Set socket address information **/
+		// Set a pointer to an addrinfo structure that provides
+		// hint about the type of socket the caller supports.
+
+		this->server = gethostbyname(host.c_str());
+		if(this->server == NULL) exit(0);
+
+	    // clear socket address
+		bzero((char *) &this->serv_addr, sizeof(this->serv_addr));
+		
+		this->serv_addr.sin_family = AF_INET;
+		
+		// block copy
+		bcopy((char *)this->server->h_addr, (char *)&this->serv_addr.sin_addr.s_addr, this->server->h_length);
+		
+		int portno = atoi(port.c_str());
+		this->serv_addr.sin_port = htons(portno);
+		
+		return true;
+	}
+
+	bool createListeningSocket()//const int ai_family, const int ai_socktype, const int ai_protocol)
+	{
+		/*************************************
+					SOCKET(B)
+		**************************************/
+		/** Socket creation **/
+		// Create a SOCKET for connecting to server
+		this->connectSocket = socket(AF_INET, SOCK_STREAM, 0);
+
+		// if there is something wrong with the newly
+		// created socket, terminate immediately
+		if(this->connectSocket < 0)
+			return false;
+
+		return true;
+	}
+
+	bool connectToServer()
+	{
+		createListeningSocket();
+		if(connect(this->connectSocket,(struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0)
+			return false;
+		
+		return true;		
+	}
+
+	bool sendData(const char *sendBuff, const int buffSize)
+	{
+		/*************************************
+						SEND
+		**************************************/
+		/** Send data to server **/
+		// Send data
+		int iResult = write(this->connectSocket, sendBuff, buffSize);
+		if (iResult < 0) // Check if data is successfully sent
+		{
+			closeSockets();
+			return false;
+		}
+
+		return true;
+	}
+
+	bool receiveData(char *recvBuffer, const int buffSize)
+	{
+		/*************************************
+						RECEIVE
+		**************************************/
+		/** Receive all data sent by the client **/
+		// Receive the data sent by the client
+		// and store it in a buffer
+		int iResult = read(this->connectSocket, recvBuffer, buffSize);
+		if(iResult < 0) return false;
+		return true;
+	}
+
+	bool shutdownSockets()
+	{
+		/*************************************
+					SHUTDOWN(A)
+		**************************************/
+		/** Shutdown send operation of socket **/
+		// Shutdown the connection since no more data will be sent
+		int iResult = shutdown(this->connectSocket, SHUT_RDWR);
+		if(iResult < 0) // Check if shutdown is successful
+		{
+			closeSockets();
+			return false;
+		}
+
+		return true;
+	}
+
+	bool closeSockets()
+	{
+		/*************************************
+						CLOSE
+		**************************************/
+		// Close sockets
+		close(this->connectSocket);
+
+		return true;
+	}
+
+	int* getConnectionSocket()
+	{
+		return &this->connectSocket;
+	}
+
+};
+
+
+#endif /* CLIENT_H_ */
