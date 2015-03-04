@@ -1,7 +1,7 @@
 # Database-Server
 A multi-threaded multi-client Database Server for the Prepaid Water Supply System implemented in C++11.
 
-Operating System: Linux Lite 2.0  
+Operating System: Ubuntu 14.10  
 Compiler: GNU C++ Compiler 4.9.2  
 Database: Mysql  
 IDE/Text Editors: Sublime Text 2  
